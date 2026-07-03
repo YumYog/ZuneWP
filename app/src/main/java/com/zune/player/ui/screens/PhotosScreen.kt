@@ -57,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -123,6 +124,20 @@ fun PhotosScreen(
     
     // Scoped Storage and deletion triggers
     var reloadTrigger by remember { mutableIntStateOf(0) }
+    
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                reloadTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    
     var pendingDeleteUri by remember { mutableStateOf<Uri?>(null) }
     var deletedMockIds by remember { mutableStateOf(emptySet<Long>()) }
 
@@ -153,18 +168,24 @@ fun PhotosScreen(
                         MediaStore.Images.Media._ID,
                         MediaStore.Images.Media.DISPLAY_NAME,
                         MediaStore.Images.Media.DATE_TAKEN,
+                        MediaStore.Images.Media.DATE_ADDED,
                         MediaStore.Images.Media.BUCKET_DISPLAY_NAME
                     )
-                    resolver.query(uri, projection, null, null, "${MediaStore.Images.Media.DATE_TAKEN} DESC")?.use { cursor ->
+                    resolver.query(uri, projection, null, null, null)?.use { cursor ->
                         val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                         val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
                         val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
+                        val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
                         val bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
                         
                         while (cursor.moveToNext()) {
                             val id = cursor.getLong(idColumn)
                             val name = cursor.getString(nameColumn) ?: "photo_$id"
-                            val date = cursor.getLong(dateColumn)
+                            var date = cursor.getLong(dateColumn)
+                            val dateAdded = cursor.getLong(dateAddedColumn)
+                            if (date <= 0L) {
+                                date = dateAdded * 1000L
+                            }
                             val album = cursor.getString(bucketColumn) ?: "camera roll"
                             val contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                             loadedList.add(
@@ -181,6 +202,7 @@ fun PhotosScreen(
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+                loadedList.sortByDescending { it.dateTaken }
             }
         }
         
@@ -251,7 +273,7 @@ fun PhotosScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color.Transparent)
     ) {
         if (!hasPermission && !useSamplesFallback) {
             PhotosPermissionPrompt(
@@ -269,7 +291,7 @@ fun PhotosScreen(
                         painter = androidx.compose.ui.res.painterResource(id = com.zune.player.R.drawable.zune_back),
                         contentDescription = "Back",
                         modifier = Modifier
-                            .padding(bottom = 24.dp)
+                            .padding(bottom = 4.dp)
                             .offset(x = (-20).dp, y = (-8).dp)
                             .size(80.dp)
                             .metroClickable { activeAlbumName = null }
@@ -277,19 +299,19 @@ fun PhotosScreen(
                     Text(
                         text = "ALBUMS",
                         style = ZuneTypography.h4.copy(
-                            fontFamily = SegoeUiLightFontFamily,
+                            fontFamily = SegoeUiFontFamily,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = ZuneTextSecondary,
-                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 4.dp)
+                        modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 4.dp)
                     )
                     
                     Text(
-                        text = albumName.lowercase(),
+                        text = albumName.uppercase(),
                         style = ZuneTypography.h1.copy(
-                            fontFamily = SegoeUiLightFontFamily,
-                            fontSize = 56.sp
+                            fontFamily = SegoeUiFontFamily,
+                            fontSize = 42.sp
                         ),
                         color = Color.White,
                         modifier = Modifier.padding(start = 24.dp, bottom = 16.dp)
@@ -352,7 +374,7 @@ fun PhotosScreen(
                         painter = androidx.compose.ui.res.painterResource(id = com.zune.player.R.drawable.zune_back),
                         contentDescription = "Back",
                         modifier = Modifier
-                            .padding(bottom = 24.dp)
+                            .padding(bottom = 4.dp)
                             .offset(x = (-20).dp, y = (-8).dp)
                             .size(80.dp)
                             .metroClickable { onBack() }
@@ -363,14 +385,14 @@ fun PhotosScreen(
 
                     // Small Category / Section Header
                     Text(
-                        text = if (isAeroTheme) "Photo Library" else "PHOTOS",
+                        text = "PHOTOS",
                         style = ZuneTypography.h4.copy(
-                            fontFamily = SegoeUiLightFontFamily,
+                            fontFamily = SegoeUiFontFamily,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = ZuneTextSecondary,
-                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 4.dp)
+                        modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 4.dp)
                     )
                     
                     // Sliding giant tabs
@@ -411,11 +433,11 @@ fun PhotosScreen(
                                 val alpha = (1f - distance * 0.6f).coerceIn(0.4f, 1f)
                                 
                                 val isCurrentTab = pagerState.currentPage == index
-                                val displayText = if (isAeroTheme && isCurrentTab) "< $title >" else title
+                                val displayText = if (isAeroTheme && isCurrentTab) "< ${title.uppercase()} >" else title.uppercase()
                                 val textColor = Color.White.copy(alpha = alpha)
                                 val textStyle = ZuneTypography.h1.copy(
-                                    fontFamily = SegoeUiLightFontFamily,
-                                    fontSize = 56.sp
+                                    fontFamily = SegoeUiFontFamily,
+                                    fontSize = 42.sp
                                 )
                                 
                                 Text(
@@ -473,11 +495,11 @@ fun PhotosScreen(
                                                 // Header month item (span entire columns)
                                                 item(span = { GridItemSpan(columns) }, key = "header_$item") {
                                                     Text(
-                                                        text = item.lowercase(),
+                                                        text = item.uppercase(),
                                                         style = ZuneTypography.h2.copy(
                                                             fontFamily = SegoeUiLightFontFamily,
                                                             fontSize = 28.sp,
-                                                            color = if (isAeroTheme) AeroBlueOrbAccentColor else ZuneAccent.lightenForText()
+                                                            color = ZuneAccent.lightenForText()
                                                         ),
                                                         modifier = Modifier
                                                             .fillMaxWidth()
@@ -490,6 +512,7 @@ fun PhotosScreen(
                                                 val photoIndex = photos.indexOf(item)
                                                 item(key = "photo_${item.id}_$globalIndex") {
                                                     PhotoGridCard(
+                                                        modifier = Modifier.animateItem(),
                                                         photo = item,
                                                         isAeroTheme = isAeroTheme,
                                                         onClick = {
@@ -663,7 +686,11 @@ fun PhotosScreen(
         }
         
         // 5. Fullscreen Month Jump Selector Dialog (Reference Image 1)
-        if (showJumpSelector) {
+        AnimatedVisibility(
+            visible = showJumpSelector,
+            enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.9f, animationSpec = tween(300)),
+            exit = fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.9f, animationSpec = tween(300))
+        ) {
             MonthJumpListSelector(
                 months = groupedPhotos.map { it.first },
                 onMonthSelected = { selectedMonth ->
@@ -681,92 +708,119 @@ fun PhotosScreen(
         }
 
         // 6. Long Press Drop-Up Context Menu
-        if (longPressedPhoto != null) {
-            val photo = longPressedPhoto!!
-            val targetId = remember(photo.id) { photo.id or 0x1000000000000000L }
-            val isPinned = remember(targetId, pinnedIds) {
-                pinnedIds.contains(targetId)
+        val hasLongPressedPhoto = longPressedPhoto != null
+        var lastNonNullPhoto by remember { mutableStateOf<PhotoItem?>(null) }
+        LaunchedEffect(longPressedPhoto) {
+            if (longPressedPhoto != null) {
+                lastNonNullPhoto = longPressedPhoto
             }
-            
+        }
+        
+        AnimatedVisibility(
+            visible = hasLongPressedPhoto,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f))
                     .clickable { longPressedPhoto = null }
             )
-            
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(Color(0xFF111111))
-                    .drawBehind {
-                        val strokeWidth = 1.dp.toPx()
-                        drawLine(
-                            color = Color.White.copy(alpha = 0.15f),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, 0f),
-                            strokeWidth = strokeWidth
-                        )
+        }
+        
+        AnimatedVisibility(
+            visible = hasLongPressedPhoto,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
+            ) + fadeIn(),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
+            ) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val photo = lastNonNullPhoto
+            if (photo != null) {
+                val targetId = remember(photo.id) { photo.id or 0x1000000000000000L }
+                val isPinned = remember(targetId, pinnedIds) {
+                    pinnedIds.contains(targetId)
+                }
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF111111))
+                        .drawBehind {
+                            val strokeWidth = 1.dp.toPx()
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.15f),
+                                start = Offset(0f, 0f),
+                                end = Offset(size.width, 0f),
+                                strokeWidth = strokeWidth
+                            )
+                        }
+                        .navigationBarsPadding()
+                        .padding(bottom = 24.dp, top = 8.dp)
+                        .clickable(enabled = false) {}
+                ) {
+                    Text(
+                        text = photo.title.lowercase(),
+                        style = ZuneTypography.body2.copy(fontSize = 14.sp),
+                        color = ZuneTextSecondary,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                    )
+                    
+                    DropUpMenuItem(text = if (isPinned) "unpin from start" else "pin to start") {
+                        longPressedPhoto = null
+                        if (isPinned) {
+                            onUnpin(targetId)
+                        } else {
+                            onPin(targetId)
+                        }
+                        android.widget.Toast.makeText(context, if (isPinned) "unpinned" else "pinned", android.widget.Toast.LENGTH_SHORT).show()
                     }
-                    .navigationBarsPadding()
-                    .padding(bottom = 24.dp, top = 8.dp)
-                    .clickable(enabled = false) {}
-            ) {
-                Text(
-                    text = photo.title.lowercase(),
-                    style = ZuneTypography.body2.copy(fontSize = 14.sp),
-                    color = ZuneTextSecondary,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                )
-                
-                DropUpMenuItem(text = if (isPinned) "unpin from start" else "pin to start") {
-                    longPressedPhoto = null
-                    if (isPinned) {
-                        onUnpin(targetId)
-                    } else {
-                        onPin(targetId)
+                    
+                    DropUpMenuItem(text = "use as background") {
+                        longPressedPhoto = null
+                        val prefs = context.getSharedPreferences("zune_prefs", Context.MODE_PRIVATE)
+                        prefs.edit()
+                            .putInt("bg_selection", -1)
+                            .putString("bg_custom_uri", photo.uri?.toString() ?: "")
+                            .apply()
+                        android.widget.Toast.makeText(context, "background updated", android.widget.Toast.LENGTH_SHORT).show()
                     }
-                    android.widget.Toast.makeText(context, if (isPinned) "unpinned" else "pinned", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                
-                DropUpMenuItem(text = "use as background") {
-                    longPressedPhoto = null
-                    val prefs = context.getSharedPreferences("zune_prefs", Context.MODE_PRIVATE)
-                    prefs.edit()
-                        .putInt("bg_selection", -1)
-                        .putString("bg_custom_uri", photo.uri?.toString() ?: "")
-                        .apply()
-                    android.widget.Toast.makeText(context, "background updated", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                
-                DropUpMenuItem(text = "view details") {
-                    longPressedPhoto = null
-                    photoToShowDetails = photo
-                }
-                
-                DropUpMenuItem(text = "delete") {
-                    longPressedPhoto = null
-                    if (photo.uri != null) {
-                        pendingDeleteUri = photo.uri
-                        deleteMediaStoreUri(
-                            context = context,
-                            uri = photo.uri,
-                            onDeleteCompleted = {
-                                reloadTrigger++
-                            },
-                            onLauncherNeeded = { intentSender ->
-                                try {
-                                    deleteLauncher.launch(
-                                        androidx.activity.result.IntentSenderRequest.Builder(intentSender).build()
-                                    )
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
+                    
+                    DropUpMenuItem(text = "view details") {
+                        longPressedPhoto = null
+                        photoToShowDetails = photo
+                    }
+                    
+                    DropUpMenuItem(text = "delete") {
+                        longPressedPhoto = null
+                        if (photo.uri != null) {
+                            pendingDeleteUri = photo.uri
+                            deleteMediaStoreUri(
+                                context = context,
+                                uri = photo.uri,
+                                onDeleteCompleted = {
+                                    reloadTrigger++
+                                },
+                                onLauncherNeeded = { intentSender ->
+                                    try {
+                                        deleteLauncher.launch(
+                                            androidx.activity.result.IntentSenderRequest.Builder(intentSender).build()
+                                        )
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
                                 }
-                            }
-                        )
-                    } else {
-                        deletedMockIds = deletedMockIds + photo.id
+                            )
+                        } else {
+                            deletedMockIds = deletedMockIds + photo.id
+                        }
                     }
                 }
             }
@@ -906,7 +960,8 @@ fun PhotoGridCard(
     photo: PhotoItem,
     isAeroTheme: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onLongClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val thumbnail = rememberPhotoThumbnail(context, photo.uri)
@@ -936,7 +991,7 @@ fun PhotoGridCard(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .aspectRatio(1f)
             .then(cardGlassModifier)
@@ -1167,12 +1222,12 @@ fun MonthJumpListSelector(
             // List of months in blue rectangles (Reference Image 1)
             val configuration = androidx.compose.ui.platform.LocalConfiguration.current
             val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-            val columns = if (isLandscape) 3 else 1
+            val columns = if (isLandscape) 5 else 3
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)
             ) {
                 itemsIndexed(months) { index, month ->
@@ -1181,17 +1236,19 @@ fun MonthJumpListSelector(
                             .fillMaxWidth()
                             .background(Color(0xFF2E63FF)) // Vibrant Windows Phone Blue
                             .metroClickable { onMonthSelected(month) }
-                            .padding(vertical = 14.dp, horizontal = 24.dp),
-                        contentAlignment = Alignment.CenterStart
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = month.lowercase(),
                             style = ZuneTypography.h2.copy(
-                                fontFamily = SegoeUiLightFontFamily,
-                                fontSize = 22.sp,
+                                fontFamily = SegoeUiFontFamily,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Normal
                             ),
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1317,18 +1374,34 @@ fun FullscreenLightbox(
             }
         }
         
-        // WP-style Drop-up Metro Menu Overlay
-        if (showMenu) {
+        AnimatedVisibility(
+            visible = showMenu,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f))
                     .clickable { showMenu = false }
             )
-            
+        }
+        
+        AnimatedVisibility(
+            visible = showMenu,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
+            ) + fadeIn(),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
+            ) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .background(Color(0xFF111111))
                     .drawBehind {
@@ -1342,7 +1415,7 @@ fun FullscreenLightbox(
                     }
                     .navigationBarsPadding()
                     .padding(bottom = 24.dp, top = 8.dp)
-                    .clickable(enabled = false) {} // block click propagation
+                    .clickable(enabled = false) {}
             ) {
                 DropUpMenuItem(text = "use as background") {
                     showMenu = false

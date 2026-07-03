@@ -18,6 +18,8 @@ mipmap ic_launcher
 mipmap ic_launcher_foreground
 mipmap ic_launcher_round
 string app_name
+string screensaver_name
 style Theme_ZunePlayer
 xml backup_rules
 xml data_extraction_rules
+xml dream_info

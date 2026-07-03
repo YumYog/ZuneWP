@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -131,6 +132,20 @@ fun VideosScreen(
     
     // Scoped Storage and deletion triggers
     var reloadTrigger by remember { mutableIntStateOf(0) }
+    
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                reloadTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    
     var pendingDeleteUri by remember { mutableStateOf<Uri?>(null) }
     var deletedMockIds by remember { mutableStateOf(emptySet<Long>()) }
 
@@ -221,7 +236,7 @@ fun VideosScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color.Transparent)
     ) {
         if (!hasPermission && !useSamplesFallback) {
             VideosPermissionPrompt(
@@ -235,29 +250,29 @@ fun VideosScreen(
                     painter = androidx.compose.ui.res.painterResource(id = com.zune.player.R.drawable.zune_back),
                     contentDescription = "Back",
                     modifier = Modifier
-                        .padding(bottom = 24.dp)
+                        .padding(bottom = 4.dp)
                         .offset(x = (-20).dp, y = (-8).dp)
                         .size(80.dp)
                         .metroClickable { onBack() }
                 )
                 // Small Category / Section Header
                 Text(
-                    text = if (isAeroTheme) "Video Library" else "VIDEOS",
+                    text = "VIDEOS",
                     style = ZuneTypography.h4.copy(
-                        fontFamily = SegoeUiLightFontFamily,
+                        fontFamily = SegoeUiFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     ),
                     color = ZuneTextSecondary,
-                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 4.dp)
+                    modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 4.dp)
                 )
                 
                 // Large ALL header
                 Text(
-                    text = "all",
+                    text = "ALL",
                     style = ZuneTypography.h1.copy(
-                        fontFamily = SegoeUiLightFontFamily,
-                        fontSize = 56.sp
+                        fontFamily = SegoeUiFontFamily,
+                        fontSize = 42.sp
                     ),
                     color = Color.White,
                     modifier = Modifier.padding(start = 24.dp, bottom = 16.dp)
@@ -284,8 +299,9 @@ fun VideosScreen(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            itemsIndexed(currentVideosFiltered) { index, video ->
+                            itemsIndexed(currentVideosFiltered, key = { _, video -> video.id }) { index, video ->
                                 VideoListCard(
+                                    modifier = Modifier.animateItem(),
                                     video = video,
                                     isAeroTheme = isAeroTheme,
                                     onClick = { activePlaybackVideo = video },
@@ -301,8 +317,9 @@ fun VideosScreen(
                             contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            itemsIndexed(currentVideosFiltered) { index, video ->
+                            itemsIndexed(currentVideosFiltered, key = { _, video -> video.id }) { index, video ->
                                 VideoListCard(
+                                    modifier = Modifier.animateItem(),
                                     video = video,
                                     isAeroTheme = isAeroTheme,
                                     onClick = { activePlaybackVideo = video },
@@ -320,6 +337,8 @@ fun VideosScreen(
         activePlaybackVideo?.let { video ->
             FullscreenVideoPlayer(
                 video = video,
+                videos = currentVideosFiltered,
+                onVideoChanged = { activePlaybackVideo = it },
                 pinnedIds = pinnedIds,
                 onPin = onPin,
                 onUnpin = onUnpin,
@@ -583,7 +602,8 @@ fun VideoListCard(
     video: VideoItem,
     isAeroTheme: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onLongClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val cardGlassModifier = if (isAeroTheme) {
@@ -616,7 +636,7 @@ fun VideoListCard(
     val localThumbnail = rememberVideoThumbnail(context, video.uri)
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
@@ -705,6 +725,8 @@ fun VideoListCard(
 @Composable
 fun FullscreenVideoPlayer(
     video: VideoItem,
+    videos: List<VideoItem>,
+    onVideoChanged: (VideoItem) -> Unit,
     pinnedIds: List<Long> = emptyList(),
     onPin: (Long) -> Unit = {},
     onUnpin: (Long) -> Unit = {},
@@ -721,10 +743,10 @@ fun FullscreenVideoPlayer(
     
     // Check if loading online URL is successful. If not, fallback seamlessly to simulator.
     var useSimulator by remember { mutableStateOf(video.uri == null) }
-    
-    // Power player states
+       // Power player states
     var isMuted by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     
     val resizeModes = listOf(
         androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT,
@@ -732,35 +754,55 @@ fun FullscreenVideoPlayer(
         androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL  // Stretch
     )
     val resizeLabels = listOf("fit", "crop", "stretch")
-    var resizeIndex by remember { mutableIntStateOf(0) }
+    var resizeIndex by remember { mutableStateOf(0) }
     
     val speeds = listOf(0.5f, 1.0f, 1.5f, 2.0f)
-    var speedIndex by remember { mutableIntStateOf(1) } // default 1.0f
+    var speedIndex by remember { mutableStateOf(1) } // default 1.0f
 
-    val exoPlayer = remember(video) {
-        if (!useSimulator) {
+    val exoPlayer = remember {
+        try {
+            ExoPlayer.Builder(context).build().apply {
+                playWhenReady = true
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Optimize: Reuse ExoPlayer and update media item when video changes
+    LaunchedEffect(video, exoPlayer) {
+        useSimulator = video.uri == null
+        currentPos = 0L
+        duration = video.durationMs
+        isPlaying = true
+        scale = 1f
+        offset = Offset.Zero
+        
+        exoPlayer?.let { player ->
             try {
-                ExoPlayer.Builder(context).build().apply {
+                player.stop()
+                player.clearMediaItems()
+                if (!useSimulator) {
                     val mediaUri = video.uri ?: Uri.parse(video.videoUrl)
-                    setMediaItem(MediaItem.fromUri(mediaUri))
-                    prepare()
-                    playWhenReady = true
-                    volume = if (isMuted) 0f else 1f
-                    setPlaybackSpeed(speeds[speedIndex])
+                    player.setMediaItem(MediaItem.fromUri(mediaUri))
+                    player.prepare()
+                    player.playWhenReady = true
+                    player.volume = if (isMuted) 0f else 1f
+                    player.setPlaybackSpeed(speeds[speedIndex])
                     
-                    addListener(object : androidx.media3.common.Player.Listener {
+                    // Add listener to update duration
+                    player.addListener(object : androidx.media3.common.Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
                             if (state == androidx.media3.common.Player.STATE_READY) {
-                                duration = this@apply.duration
+                                duration = player.duration
                             }
                         }
                     })
                 }
             } catch (e: Exception) {
                 useSimulator = true
-                null
             }
-        } else null
+        }
     }
     
     // Dynamically apply mute and playback speed states when modified
@@ -772,7 +814,7 @@ fun FullscreenVideoPlayer(
     }
     
     // Report play positioning
-    LaunchedEffect(isPlaying, useSimulator) {
+    LaunchedEffect(isPlaying, useSimulator, video) {
         while (isPlaying) {
             if (useSimulator) {
                 currentPos += 1000
@@ -859,6 +901,35 @@ fun FullscreenVideoPlayer(
                         } while (event.changes.any { it.pressed })
                     }
                 }
+                .then(
+                    if (scale == 1f) {
+                        Modifier.pointerInput(video) {
+                            var totalDragX = 0f
+                            detectDragGestures(
+                                onDragStart = { totalDragX = 0f },
+                                onDragEnd = {
+                                    if (totalDragX > 150f) {
+                                        // Swipe Right -> Prev
+                                        val currentIndex = videos.indexOf(video)
+                                        if (currentIndex > 0) {
+                                            onVideoChanged(videos[currentIndex - 1])
+                                        }
+                                    } else if (totalDragX < -150f) {
+                                        // Swipe Left -> Next
+                                        val currentIndex = videos.indexOf(video)
+                                        if (currentIndex < videos.size - 1) {
+                                            onVideoChanged(videos[currentIndex + 1])
+                                        }
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    totalDragX += dragAmount.x
+                                }
+                            )
+                        }
+                    } else Modifier
+                )
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onDoubleTap = { tapOffset ->
@@ -962,7 +1033,7 @@ fun FullscreenVideoPlayer(
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
                     .statusBarsPadding()
                     .padding(horizontal = 24.dp, vertical = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
@@ -974,62 +1045,6 @@ fun FullscreenVideoPlayer(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "close", tint = Color.White, modifier = Modifier.size(18.dp))
-                }
-                
-                Text(
-                    text = video.title.uppercase(),
-                    style = ZuneTypography.h2.copy(
-                        fontFamily = SegoeUiLightFontFamily,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = Color.White,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp).weight(1f)
-                )
-                
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Share Circular Button
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.4f), CircleShape)
-                            .clickable {
-                                video.uri?.let { uri ->
-                                    try {
-                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "video/*"
-                                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "share video"))
-                                    } catch (e: Exception) {
-                                        android.widget.Toast.makeText(context, "failed to share.", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                } ?: run {
-                                    android.widget.Toast.makeText(context, "cannot share catalog video.", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = "share", tint = Color.White, modifier = Modifier.size(18.dp))
-                    }
-                    
-                    // Delete Circular Button
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.4f), CircleShape)
-                            .clickable { onDeleteVideo() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "delete", tint = Color.White, modifier = Modifier.size(18.dp))
-                    }
                 }
             }
         }
@@ -1087,156 +1102,207 @@ fun FullscreenVideoPlayer(
                     }
                 }
                 
-                // Advanced power controls row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                // Transport controls row (Circular WP Design) + Three Dot Button
+                Box(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Mute Circular Button
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                            .clickable { isMuted = !isMuted },
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
-                            contentDescription = "mute",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    
-                    // Resize Mode Label Button
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                            .clickable { resizeIndex = (resizeIndex + 1) % resizeModes.size },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = resizeLabels[resizeIndex],
-                            style = ZuneTypography.caption.copy(fontFamily = SegoeUiLightFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                            color = Color.White
-                        )
-                    }
-                    
-                    // Speed Selector Button
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                            .clickable { speedIndex = (speedIndex + 1) % speeds.size },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "${speeds[speedIndex]}x",
-                            style = ZuneTypography.caption.copy(fontFamily = SegoeUiLightFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                            color = Color.White
-                        )
+                        // Skip Back 10s Circular Button
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                                .clickable {
+                                    val seekTo = (currentPos - 10000).coerceAtLeast(0)
+                                    currentPos = seekTo
+                                    if (!useSimulator && exoPlayer != null) {
+                                        exoPlayer.seekTo(seekTo)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay,
+                                contentDescription = "skip back 10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.width(32.dp))
+                        
+                        // Main Play/Pause Button
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .border(1.8.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                                .clickable {
+                                    isPlaying = !isPlaying
+                                    if (!useSimulator && exoPlayer != null) {
+                                        if (isPlaying) exoPlayer.play() else exoPlayer.pause()
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "play/pause",
+                                tint = Color.White,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.width(32.dp))
+                        
+                        // Skip Forward 10s Circular Button
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                                .clickable {
+                                    val seekTo = (currentPos + 10000).coerceAtMost(duration)
+                                    currentPos = seekTo
+                                    if (!useSimulator && exoPlayer != null) {
+                                        exoPlayer.seekTo(seekTo)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Forward,
+                                contentDescription = "skip forward 10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
-                    // Details Button
-                    Box(
+                    // Three Dot Button on the far right
+                    Icon(
+                        imageVector = Icons.Default.MoreHoriz,
+                        contentDescription = "more options",
+                        tint = Color.White,
                         modifier = Modifier
-                            .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                            .border(1.2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                            .clickable { showDetails = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "details",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                
-                // Transport controls row (Circular WP Design)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Skip Back 10s Circular Button
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .border(1.5.dp, Color.White.copy(alpha = 0.7f), CircleShape)
-                            .clickable {
-                                val seekTo = (currentPos - 10000).coerceAtLeast(0)
-                                currentPos = seekTo
-                                if (!useSimulator && exoPlayer != null) {
-                                    exoPlayer.seekTo(seekTo)
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Replay,
-                            contentDescription = "skip back 10s",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.width(32.dp))
-                    
-                    // Main Play/Pause Button
-                    Box(
-                        modifier = Modifier
-                            .size(68.dp)
-                            .border(1.8.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                            .clickable {
-                                isPlaying = !isPlaying
-                                if (!useSimulator && exoPlayer != null) {
-                                    if (isPlaying) exoPlayer.play() else exoPlayer.pause()
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "play/pause",
-                            tint = Color.White,
-                            modifier = Modifier.size(36.dp)
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.width(32.dp))
-                    
-                    // Skip Forward 30s Circular Button
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .border(1.5.dp, Color.White.copy(alpha = 0.7f), CircleShape)
-                            .clickable {
-                                val seekTo = (currentPos + 30000).coerceAtMost(duration)
-                                currentPos = seekTo
-                                if (!useSimulator && exoPlayer != null) {
-                                    exoPlayer.seekTo(seekTo)
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Forward,
-                            contentDescription = "skip forward 30s",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                            .align(Alignment.CenterEnd)
+                            .size(36.dp)
+                            .metroClickable { showMenu = true }
+                    )
                 }
             }
         }
+        
+        // Slide-up Drop-up Menu for Advanced Options with fade scrim and slide-up animation
+        val targetId = remember(video.id) { video.id or 0x2000000000000000L }
+        val isPinned = remember(targetId, pinnedIds) { pinnedIds.contains(targetId) }
+        
+        AnimatedVisibility(
+            visible = showMenu,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable { showMenu = false }
+            )
+        }
+        
+        AnimatedVisibility(
+            visible = showMenu,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
+            ) + fadeIn(),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
+            ) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF111111))
+                    .drawBehind {
+                        val strokeWidth = 1.dp.toPx()
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.15f),
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, 0f),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+                    .navigationBarsPadding()
+                    .padding(bottom = 24.dp, top = 8.dp)
+                    .clickable(enabled = false) {}
+            ) {
+                Text(
+                    text = video.title.lowercase(),
+                    style = ZuneTypography.body2.copy(fontSize = 14.sp),
+                    color = ZuneTextSecondary,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                )
+                
+                DropUpMenuItem(text = if (isPinned) "unpin from start" else "pin to start") {
+                    showMenu = false
+                    if (isPinned) {
+                        onUnpin(targetId)
+                    } else {
+                        onPin(targetId)
+                    }
+                    android.widget.Toast.makeText(context, if (isPinned) "unpinned" else "pinned", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                
+                DropUpMenuItem(text = if (isMuted) "unmute" else "mute") {
+                    isMuted = !isMuted
+                    showMenu = false
+                }
+                
+                DropUpMenuItem(text = "aspect: ${resizeLabels[resizeIndex]}") {
+                    resizeIndex = (resizeIndex + 1) % resizeModes.size
+                    showMenu = false
+                }
+                
+                DropUpMenuItem(text = "speed: ${speeds[speedIndex]}x") {
+                    speedIndex = (speedIndex + 1) % speeds.size
+                    showMenu = false
+                }
+                
+                DropUpMenuItem(text = "share video") {
+                    showMenu = false
+                    video.uri?.let { uri ->
+                        try {
+                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "video/*"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(shareIntent, "share video"))
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "failed to share.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } ?: run {
+                        android.widget.Toast.makeText(context, "cannot share catalog video.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                
+                DropUpMenuItem(text = "view details") {
+                    showMenu = false
+                    showDetails = true
+                }
+                
+                DropUpMenuItem(text = "delete video") {
+                    showMenu = false
+                    onDeleteVideo()
+                }
+            }
+        } }
         
         // Video Details Dialog
         if (showDetails) {
@@ -1315,7 +1381,7 @@ fun FullscreenVideoPlayer(
             }
         }
     }
-}
+
 
 // 5. Videos Hub Storage Permission Prompt (Refined Windows Phone style)
 @Composable

@@ -17,6 +17,8 @@ int mipmap ic_launcher 0x0
 int mipmap ic_launcher_foreground 0x0
 int mipmap ic_launcher_round 0x0
 int string app_name 0x0
+int string screensaver_name 0x0
 int style Theme_ZunePlayer 0x0
 int xml backup_rules 0x0
 int xml data_extraction_rules 0x0
+int xml dream_info 0x0

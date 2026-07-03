@@ -3,6 +3,7 @@ package com.zune.player.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
@@ -37,8 +38,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
@@ -95,6 +98,15 @@ fun NowPlayingScreen(
     val screenWidth = configuration.screenWidthDp.dp
     val artSize = screenWidth * 0.64f
     var swipeOffset by remember { mutableStateOf(0f) }
+    val animatedSwipeOffset by animateFloatAsState(
+        targetValue = swipeOffset,
+        animationSpec = if (swipeOffset == 0f) {
+            spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium)
+        } else {
+            snap()
+        },
+        label = "SwipeOffsetAnimation"
+    )
 
     var showLyrics by remember { mutableStateOf(false) }
 
@@ -106,6 +118,35 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        // Ambient Blurred Album Art Background
+        currentItem?.albumArtUri?.let { artUri ->
+            AsyncImage(
+                model = artUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(50.dp)
+                    .graphicsLayer { alpha = 0.25f }
+            )
+        }
+        
+        // Dynamic Ambient Glow based on Accent Color
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.12f),
+                            Color.Transparent
+                        ),
+                        center = Offset(0f, 0f),
+                        radius = 2000f
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -154,6 +195,12 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .size(artSize)
                     .background(Color(0xFF1C1C1C))
+                    .graphicsLayer {
+                        translationX = animatedSwipeOffset
+                        rotationY = (animatedSwipeOffset / size.width) * -15f
+                        alpha = (1f - kotlin.math.abs(animatedSwipeOffset) / size.width).coerceIn(0.5f, 1f)
+                        cameraDistance = 12f * density
+                    }
                     .pointerInput(Unit) {
                         detectHorizontalDragGestures(
                             onDragEnd = {

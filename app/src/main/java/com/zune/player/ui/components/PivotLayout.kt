@@ -22,6 +22,11 @@ import com.zune.player.ui.theme.ZuneTypography
 import com.zune.player.ui.theme.AeroBlueOrbGradient
 import com.zune.player.ui.theme.SegoeUiLightFontFamily
 
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+
 @Composable
 fun PivotLayout(
     title: String? = null,
@@ -31,6 +36,7 @@ fun PivotLayout(
     isBlackBackground: Boolean = false,
     isAeroTheme: Boolean = false,
     onOffsetChanged: (Float) -> Unit = {},
+    onPageSelected: (Int) -> Unit = {},
     content: @Composable (Int) -> Unit
 ) {
     val pagerState = rememberPagerState(initialPage = initialPage) { pages.size }
@@ -44,12 +50,17 @@ fun PivotLayout(
             }
     }
 
+    LaunchedEffect(pagerState.currentPage) {
+        onPageSelected(pagerState.currentPage)
+    }
+
     Box(
         modifier = modifier.fillMaxSize()
     ) {
         HorizontalPager(
             state = pagerState,
-            contentPadding = PaddingValues(end = 48.dp),
+            contentPadding = PaddingValues(0.dp),
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             Box(
@@ -57,17 +68,36 @@ fun PivotLayout(
                     .fillMaxSize()
                     .graphicsLayer {
                         val rawOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                        val absOffset = kotlin.math.abs(rawOffset)
                         
-                        if (rawOffset < 0f) {
-                            // If we are scrolling towards the right, and the next page is Now Playing (page 1), 
-                            // push it entirely off screen to the right so it doesn't peek into the Pins screen.
-                            if (page == 1) {
-                                translationX = -rawOffset * 48.dp.toPx()
-                            }
-                        }
+                        // Scale inactive pages down to 0.40f
+                        val scale = 1f - (absOffset * 0.6f).coerceIn(0f, 0.6f)
+                        scaleX = scale
+                        scaleY = scale
+                        
+                        // Do not fade away
+                        alpha = 1f
+                        
+                        // Translate inactive page to hold it on screen as a preview
+                        val w = size.width
+                        translationX = rawOffset * w * 0.7f
                     }
             ) {
                 content(page)
+                if (pagerState.currentPage != page) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(page)
+                                }
+                            }
+                    )
+                }
             }
         }
         if (title != null) {
