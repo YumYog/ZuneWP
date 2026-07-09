@@ -17,6 +17,8 @@ val SegoeUiLightFontFamily = FontFamily(
     Font(R.font.segoe_ui_light)
 )
 
+val SegoeUiFontFamily = ZuneFontFamily
+
 val SegoeUiBoldFontFamily = FontFamily(
     Font(R.font.segoeuithibd, FontWeight.Bold)
 )

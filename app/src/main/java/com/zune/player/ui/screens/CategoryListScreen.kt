@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,7 +29,7 @@ import com.zune.player.ui.components.metroClickable
 import com.zune.player.ui.theme.ZuneTextPrimary
 import com.zune.player.ui.theme.ZuneTextSecondary
 import com.zune.player.ui.theme.ZuneTypography
-import com.zune.player.ui.theme.SegoeUiLightFontFamily
+import com.zune.player.ui.theme.SegoeUiFontFamily
 import com.zune.player.ui.theme.LocalZuneAccent
 import com.zune.player.ui.theme.AeroBlueOrbGradient
 import coil.compose.AsyncImage
@@ -79,11 +81,14 @@ fun CategoryListScreen(
 ) {
     val categories = listOf("playlists", "songs", "artists", "albums")
     val initialIndex = categories.indexOf(initialCategory.lowercase()).coerceAtLeast(0)
-    val pagerState = rememberPagerState(initialPage = initialIndex) { categories.size }
+    val pageCount = 20000
+    val middlePage = 10000
+    val pagerState = rememberPagerState(initialPage = middlePage + initialIndex) { pageCount }
     val coroutineScope = rememberCoroutineScope()
     
     LaunchedEffect(pagerState.currentPage) {
-        onCategoryChanged(categories[pagerState.currentPage])
+        val actualIndex = (pagerState.currentPage % categories.size + categories.size) % categories.size
+        onCategoryChanged(categories[actualIndex])
     }
     
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -106,22 +111,13 @@ fun CategoryListScreen(
             
             // Pivot Header
             Text(
-                text = if (isAeroTheme) "Music Library" else "COLLECTION",
-                style = if (isAeroTheme) {
-                    ZuneTypography.h4.copy(
-                        fontFamily = SegoeUiLightFontFamily,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        brush = AeroBlueOrbGradient
-                    )
-                } else {
-                    ZuneTypography.h4.copy(
-                        fontFamily = SegoeUiLightFontFamily,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                color = if (isAeroTheme) Color.Unspecified else ZuneTextSecondary,
+                text = "COLLECTION",
+                style = ZuneTypography.h4.copy(
+                    fontFamily = SegoeUiFontFamily,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = ZuneTextSecondary,
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 4.dp)
             )
             
@@ -140,23 +136,23 @@ fun CategoryListScreen(
                             layout(constraints.maxWidth, placeable.height) {
                                 // Calculate the offset to shift the row leftwards based on pager state
                                 var offsetPx = 0f
-                                
-                                // The exact page we are currently on (e.g. 0.5 means halfway between 0 and 1)
+                                val startVirtualIndex = pagerState.currentPage - 2
                                 val pageOffset = pagerState.currentPage + pagerState.currentPageOffsetFraction
                                 
                                 val activePageIndex = pageOffset.toInt()
                                 val fraction = pageOffset - activePageIndex
                                 
-                                // Add up the widths of all tabs BEFORE the active one
-                                for (i in 0 until activePageIndex) {
-                                    offsetPx += (tabWidths[i] ?: 0f)
+                                for (vIdx in startVirtualIndex until activePageIndex) {
+                                    val index = (vIdx % categories.size + categories.size) % categories.size
+                                    offsetPx += (tabWidths[index] ?: 0f)
                                 }
                                 
-                                // Add the proportional width of the active tab being scrolled past
+                                val activeIndex = (activePageIndex % categories.size + categories.size) % categories.size
                                 if (fraction > 0f) {
-                                    offsetPx += (tabWidths[activePageIndex] ?: 0f) * fraction
-                                } else if (fraction < 0f && activePageIndex > 0) {
-                                    offsetPx += (tabWidths[activePageIndex - 1] ?: 0f) * fraction
+                                    offsetPx += (tabWidths[activeIndex] ?: 0f) * fraction
+                                } else if (fraction < 0f) {
+                                    val prevIndex = ((activePageIndex - 1) % categories.size + categories.size) % categories.size
+                                    offsetPx += (tabWidths[prevIndex] ?: 0f) * fraction
                                 }
 
                                 placeable.place(x = -offsetPx.toInt(), y = 0)
@@ -165,32 +161,22 @@ fun CategoryListScreen(
                         .padding(start = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    categories.forEachIndexed { index, title ->
+                    val visibleRange = (pagerState.currentPage - 2)..(pagerState.currentPage + 5)
+                    visibleRange.forEach { virtualIndex ->
+                        val index = (virtualIndex % categories.size + categories.size) % categories.size
+                        val title = categories[index]
                         val pageOffset = pagerState.currentPage + pagerState.currentPageOffsetFraction
-                        val distance = kotlin.math.abs(pageOffset - index)
+                        val distance = kotlin.math.abs(pageOffset - virtualIndex)
                         val alpha = (1f - distance * 0.6f).coerceIn(0.4f, 1f)
                         
-                        val isCurrentTab = pagerState.currentPage == index
-                        val displayTitle = if (isAeroTheme) title.replaceFirstChar { it.uppercase() } else title
-                        val displayText = if (isAeroTheme && isCurrentTab) "< $displayTitle >" else displayTitle
-                        val textColor = if (isAeroTheme) {
-                            // Win7 Aero: active = bright white, inactive = soft translucent white (not cyan)
-                            if (isCurrentTab) Color.White else Color.White.copy(alpha = 0.42f)
-                        } else {
-                            Color.White.copy(alpha = alpha)
-                        }
-                        val textStyle = if (isAeroTheme) {
-                            ZuneTypography.h2.copy(
-                                fontFamily = SegoeUiLightFontFamily,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Normal
-                            )
-                        } else {
-                            ZuneTypography.h1.copy(
-                                fontFamily = SegoeUiLightFontFamily,
-                                fontSize = 56.sp
-                            )
-                        }
+                        val isCurrentTab = pagerState.currentPage == virtualIndex
+                        val displayTitle = title.uppercase()
+                        val displayText = displayTitle
+                        val textColor = Color.White.copy(alpha = alpha)
+                        val textStyle = ZuneTypography.h1.copy(
+                            fontFamily = SegoeUiFontFamily,
+                            fontSize = 42.sp
+                        )
                         
                         Text(
                             text = displayText,
@@ -198,7 +184,7 @@ fun CategoryListScreen(
                             color = textColor,
                             modifier = Modifier
                                 .metroClickable {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                                    coroutineScope.launch { pagerState.animateScrollToPage(virtualIndex) }
                                 }
                                 .layout { measurable, constraints ->
                                     val placeable = measurable.measure(constraints)
@@ -219,7 +205,8 @@ fun CategoryListScreen(
                 state = pagerState,
                 modifier = Modifier.weight(1f)
             ) { page ->
-                val currentCategory = categories[page]
+                val actualPage = (page % categories.size + categories.size) % categories.size
+                val currentCategory = categories[actualPage]
                 val items = remember(currentCategory, playlists, audioItems) { getItemsForCategory(currentCategory) }
                 
                 CategoryPage(
@@ -244,19 +231,7 @@ fun CategoryListScreen(
             
             // Persistent Now Playing Bar
             if (currentPlayingTitle != null) {
-                val glassModifier = if (isAeroTheme) {
-                    Modifier
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.22f), // stronger Win7 frosted glass
-                                    Color.White.copy(alpha = 0.08f)
-                                )
-                            )
-                        )
-                } else {
-                    Modifier.background(LocalZuneAccent.current)
-                }
+                val glassModifier = Modifier.background(LocalZuneAccent.current)
 
                 Box(
                     modifier = Modifier
@@ -312,45 +287,7 @@ fun CategoryListScreen(
                         }
                     }
 
-                    if (isAeroTheme) {
-                        Canvas(modifier = Modifier.matchParentSize()) {
-                            val w = this.size.width
-                            val h = this.size.height
-
-                            // Win7 Aero Double Border Top Highlight
-                            drawLine(
-                                color = Color.Black.copy(alpha = 0.40f), // stronger outer shadow line
-                                start = Offset(0f, 0.5.dp.toPx()),
-                                end = Offset(w, 0.5.dp.toPx()),
-                                strokeWidth = 1.dp.toPx()
-                            )
-                            drawLine(
-                                color = Color.White.copy(alpha = 0.65f), // brighter Win7 inner glow line
-                                start = Offset(0f, 1.5.dp.toPx()),
-                                end = Offset(w, 1.5.dp.toPx()),
-                                strokeWidth = 1.dp.toPx()
-                            )
-
-                            val path = Path().apply {
-                                moveTo(0f, 0f)
-                                lineTo(w * 0.4f, 0f)
-                                lineTo(0f, h)
-                                close()
-                            }
-                            drawPath(
-                                path = path,
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.15f),
-                                        Color.White.copy(alpha = 0.02f),
-                                        Color.Transparent
-                                    ),
-                                    start = Offset(0f, 0f),
-                                    end = Offset(w * 0.3f, h)
-                                )
-                            )
-                        }
-                    }
+                    // No Aero Canvas border highlight
                 }
             }
         }
@@ -512,28 +449,30 @@ fun CategoryPage(
     var showJumpGrid by remember { mutableStateOf(false) }
 
     val groupedItems = remember(items) {
-        val map = mutableMapOf<Char, MutableList<Any>>()
-        items.forEach { item ->
-            val title = when (item) {
-                is String -> item
-                is com.zune.player.data.AudioItem -> {
-                    if (categoryTitle.lowercase() == "albums") item.album else item.title
+        if (categoryTitle.lowercase() == "albums") {
+            items.chunked(3)
+        } else {
+            val map = mutableMapOf<Char, MutableList<Any>>()
+            items.forEach { item ->
+                val title = when (item) {
+                    is String -> item
+                    is com.zune.player.data.AudioItem -> item.title
+                    else -> ""
                 }
-                else -> ""
+                if (title.isNotBlank()) {
+                    val firstChar = title.first().lowercaseChar()
+                    val key = if (firstChar.isLetter()) firstChar else '#'
+                    map.getOrPut(key) { mutableListOf() }.add(item)
+                }
             }
-            if (title.isNotBlank()) {
-                val firstChar = title.first().lowercaseChar()
-                val key = if (firstChar.isLetter()) firstChar else '#'
-                map.getOrPut(key) { mutableListOf() }.add(item)
+            
+            val result = mutableListOf<Any>()
+            map.keys.sorted().forEach { key ->
+                result.add(key)
+                result.addAll(map[key]!!)
             }
+            result
         }
-        
-        val result = mutableListOf<Any>()
-        map.keys.sorted().forEach { key ->
-            result.add(key)
-            result.addAll(map[key]!!)
-        }
-        result
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -571,6 +510,7 @@ fun CategoryPage(
                         is Char -> "char_${item}_$index"
                         is com.zune.player.data.AudioItem -> "song_${item.id}_$index"
                         is String -> "str_${item}_$index"
+                        is List<*> -> "row_${item.hashCode()}_$index"
                         else -> "${item.hashCode()}_$index"
                     }
                 }
@@ -578,17 +518,42 @@ fun CategoryPage(
                 if (item is Char) {
                     Box(
                         modifier = Modifier
-                            .padding(top = 24.dp, bottom = 8.dp)
-                            .size(64.dp)
+                            .animateItem()
+                            .padding(top = 16.dp, bottom = 4.dp)
+                            .size(48.dp)
                             .background(LocalZuneAccent.current)
                             .metroClickable { showJumpGrid = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = item.toString(),
-                            style = ZuneTypography.h1.copy(fontSize = 42.sp),
+                            style = ZuneTypography.h1.copy(fontSize = 24.sp, fontFamily = SegoeUiFontFamily, fontWeight = FontWeight.Bold),
                             color = Color.White
                         )
+                    }
+                } else if (item is List<*>) {
+                    val rowItems = item as List<com.zune.player.data.AudioItem>
+                    Row(
+                        modifier = Modifier
+                            .animateItem()
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        rowItems.forEach { albumItem ->
+                            AlbumGridCell(
+                                albumItem = albumItem,
+                                isAeroTheme = isAeroTheme,
+                                currentPlayingTitle = currentPlayingTitle,
+                                modifier = Modifier.weight(1f),
+                                onItemClick = { onItemClick(albumItem.album) },
+                                onPin = onPin,
+                                isPinned = isPinned
+                            )
+                        }
+                        repeat(3 - rowItems.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
                 } else {
                     val isSong = item is com.zune.player.data.AudioItem
@@ -599,6 +564,7 @@ fun CategoryPage(
 
                     Box(
                         modifier = Modifier
+                            .animateItem()
                             .fillMaxWidth()
                     ) {
                         Row(
@@ -610,40 +576,32 @@ fun CategoryPage(
                                         onLongPress = { showMenu = true }
                                     )
                                 }
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (isSong) {
                                 val audioItem = item as com.zune.player.data.AudioItem
                                 if (audioItem.albumArtUri != null) {
-                                    AsyncImage(
-                                        model = audioItem.albumArtUri,
-                                        contentDescription = "Album Art",
-                                        modifier = Modifier.size(64.dp),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
-                                    Box(modifier = Modifier.size(64.dp).background(Color(0xFF222222)))
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                            }
+                                     AsyncImage(
+                                         model = audioItem.albumArtUri,
+                                         contentDescription = "Album Art",
+                                         modifier = Modifier.size(48.dp),
+                                         contentScale = ContentScale.Crop
+                                     )
+                                 } else {
+                                     Box(modifier = Modifier.size(48.dp).background(Color(0xFF222222)))
+                                 }
+                                 Spacer(modifier = Modifier.width(12.dp))
+                             }
                             
                             Column(modifier = Modifier.weight(1f)) {
                                 val isCurrentPlaying = title.equals(currentPlayingTitle, ignoreCase = true)
-                                val titleColor = if (isAeroTheme) {
-                                    if (isCurrentPlaying) Color.White else LocalZuneAccent.current.copy(alpha = 0.7f)
-                                } else {
-                                    if (isCurrentPlaying) LocalZuneAccent.current else ZuneTextPrimary
-                                }
-                                val subtitleColor = if (isAeroTheme) {
-                                    LocalZuneAccent.current.copy(alpha = 0.5f)
-                                } else {
-                                    ZuneTextSecondary
-                                }
+                                val titleColor = if (isCurrentPlaying) LocalZuneAccent.current else ZuneTextPrimary
+                                val subtitleColor = ZuneTextSecondary
 
                                 Text(
                                     text = title.lowercase(),
-                                    style = ZuneTypography.h4.copy(fontSize = 32.sp),
+                                    style = ZuneTypography.h4.copy(fontSize = 24.sp),
                                     color = titleColor,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -652,7 +610,7 @@ fun CategoryPage(
                                     val audioItem = item as com.zune.player.data.AudioItem
                                     Text(
                                         text = "${audioItem.artist} • ${audioItem.album}".lowercase(),
-                                        style = ZuneTypography.body1,
+                                        style = ZuneTypography.body2.copy(fontSize = 13.sp),
                                         color = subtitleColor,
                                         maxLines = 1,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -730,7 +688,11 @@ fun CategoryPage(
 
 
 
-        if (showJumpGrid) {
+        AnimatedVisibility(
+            visible = showJumpGrid,
+            enter = fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.9f, animationSpec = tween(300)),
+            exit = fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.9f, animationSpec = tween(300))
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -738,10 +700,10 @@ fun CategoryPage(
                     .pointerInput(Unit) { detectTapGestures { showJumpGrid = false } }
             ) {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
+                    columns = GridCells.Fixed(6),
                     contentPadding = PaddingValues(top = 48.dp, start = 24.dp, end = 24.dp, bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     val availableLetters = groupedItems.filterIsInstance<Char>().toSet()
@@ -768,12 +730,94 @@ fun CategoryPage(
                         ) {
                             Text(
                                 text = letter.toString(),
-                                style = ZuneTypography.h1.copy(fontSize = 32.sp),
+                                style = ZuneTypography.h2.copy(
+                                    fontFamily = SegoeUiFontFamily,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
                                 color = if (hasItems) Color.White else Color.White.copy(alpha = 0.3f)
                             )
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun AlbumGridCell(
+    albumItem: com.zune.player.data.AudioItem,
+    isAeroTheme: Boolean,
+    currentPlayingTitle: String?,
+    modifier: Modifier = Modifier,
+    onItemClick: () -> Unit,
+    onPin: (String) -> Unit,
+    isPinned: (String) -> Boolean
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    val isCurrentPlaying = albumItem.album.equals(currentPlayingTitle, ignoreCase = true)
+    
+    val titleColor = if (isCurrentPlaying) LocalZuneAccent.current else ZuneTextPrimary
+
+    Box(
+        modifier = modifier
+            .pointerInput(albumItem) {
+                detectTapGestures(
+                    onTap = { onItemClick() },
+                    onLongPress = { showMenu = true }
+                )
+            }
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .background(Color(0xFF222222))
+            ) {
+                if (albumItem.albumArtUri != null) {
+                    AsyncImage(
+                        model = albumItem.albumArtUri,
+                        contentDescription = "Album Art",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = albumItem.album.lowercase(),
+                style = ZuneTypography.h4.copy(fontSize = 15.sp),
+                color = titleColor,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                text = albumItem.artist.lowercase(),
+                style = ZuneTypography.body2.copy(fontSize = 11.sp),
+                color = ZuneTextSecondary,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+            modifier = Modifier.background(Color(0xFF1A1A1A))
+        ) {
+            DropdownMenuItem(onClick = {
+                showMenu = false
+                onItemClick()
+            }) {
+                Text("play", style = ZuneTypography.body1, color = ZuneTextPrimary)
+            }
+            DropdownMenuItem(onClick = {
+                showMenu = false
+                onPin(albumItem.album)
+            }) {
+                Text(if (isPinned(albumItem.album)) "unpin from home" else "pin to home", style = ZuneTypography.body1, color = ZuneTextPrimary)
             }
         }
     }

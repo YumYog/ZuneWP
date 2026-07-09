@@ -19,6 +19,7 @@ import com.zune.player.ui.screens.HomeScreen
 import com.zune.player.ui.screens.NowPlayingScreen
 import com.zune.player.ui.screens.PhotosScreen
 import com.zune.player.ui.screens.VideosScreen
+import com.zune.player.ui.screens.AppsScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.CircularProgressIndicator
 import com.zune.player.ui.theme.ZuneAccent
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import com.zune.player.viewmodel.MusicViewModel
 import com.zune.player.ui.theme.ZuneTheme
 import androidx.compose.ui.graphics.Color
+//import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.Alignment
@@ -55,12 +57,24 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import com.zune.player.ui.theme.LocalZuneAccent
+import android.content.Context
+import com.zune.player.ui.theme.SegoeUiFontFamily
+import com.zune.player.ui.theme.ZuneTextSecondary
+import androidx.compose.foundation.border
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.material.Text
 import coil.imageLoader
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     
+    companion object {
+        val volumeLevel = kotlinx.coroutines.flow.MutableStateFlow(-1)
+        val volumeTrigger = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    }
+
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions -> }
@@ -87,6 +101,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             MainApp()
         }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val direction = if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) android.media.AudioManager.ADJUST_RAISE else android.media.AudioManager.ADJUST_LOWER
+            audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, direction, 0)
+            
+            val current = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+            val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+            
+            // Map actual volume level to a 0-30 scale for Zune look and feel
+            val scaledVal = ((current.toFloat() / max.toFloat()) * 30f).toInt()
+            volumeLevel.value = scaledVal
+            volumeTrigger.value = System.currentTimeMillis()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onTrimMemory(level: Int) {
@@ -122,6 +154,8 @@ sealed class AppScreen {
     object Podcasts : AppScreen()
     data class OnlineAlbumDetail(val browseId: String, val albumName: String, val artistName: String, val artworkUrl: String) : AppScreen()
     data class OnlineArtistDetail(val browseId: String, val artistName: String, val artworkUrl: String) : AppScreen()
+    object Personalize : AppScreen()
+    object Apps : AppScreen()
 }
 
 @Composable
@@ -152,11 +186,18 @@ fun MainApp() {
     val pinned by viewModel.pinnedItems.collectAsState()
     val prefs = remember { context.getSharedPreferences("zune_prefs", android.content.Context.MODE_PRIVATE) }
     var selectedBg by remember { mutableStateOf(prefs.getInt("bg_selection", 0)) }
+    var accentSource by remember { mutableStateOf(prefs.getString("accent_source", "music") ?: "music") }
+    var customAccentColorVal by remember { mutableIntStateOf(prefs.getInt("accent_custom_color", 0xFF0083D7.toInt())) }
+    var lastHomePageIndex by remember { mutableIntStateOf(1) }
 
     DisposableEffect(Unit) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
             if (key == "bg_selection") {
                 selectedBg = sharedPreferences.getInt("bg_selection", 0)
+            } else if (key == "accent_source") {
+                accentSource = sharedPreferences.getString("accent_source", "music") ?: "music"
+            } else if (key == "accent_custom_color") {
+                customAccentColorVal = sharedPreferences.getInt("accent_custom_color", 0xFF0083D7.toInt())
             }
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
@@ -167,12 +208,12 @@ fun MainApp() {
 
     var extractedColor by remember { mutableStateOf(ZuneAccent) }
     
-    LaunchedEffect(currentAudio?.albumArtUri, selectedBg) {
-        if (selectedBg == R.drawable.bg_4) {
-            extractedColor = AeroBlueOrbAccentColor
-        } else {
+    LaunchedEffect(currentAudio?.albumArtUri, selectedBg, accentSource, customAccentColorVal) {
+        if (accentSource == "music") {
             val newColor = extractDominantColor(context, currentAudio?.albumArtUri?.toString())
             extractedColor = newColor ?: ZuneAccent
+        } else {
+            extractedColor = Color(customAccentColorVal)
         }
     }
 
@@ -270,6 +311,8 @@ fun MainApp() {
                         is AppScreen.Podcasts -> "podcasts"
                         is AppScreen.OnlineAlbumDetail -> "online_album_detail_${screen.browseId}"
                         is AppScreen.OnlineArtistDetail -> "online_artist_detail_${screen.browseId}"
+                        is AppScreen.Personalize -> "personalize"
+                        is AppScreen.Apps -> "apps"
                     }
                 },
                 transitionSpec = {
@@ -295,7 +338,25 @@ fun MainApp() {
                             targetOffsetY = { fullHeight -> fullHeight }
                         ) + fadeOut(animationSpec = fadeSpec))
                     } else {
-                        EnterTransition.None togetherWith ExitTransition.None
+                        val duration = 500
+                        val entering = targetState
+                        val exiting = initialState
+                        val isCategoryTransition = (exiting is AppScreen.CategoryList && entering is AppScreen.CategoryList)
+                        
+                        if (isCategoryTransition) {
+                            val slideDirection = if (isForwardTransition(exiting, entering)) 1 else -1
+                            slideInHorizontally(
+                                animationSpec = tween(duration, easing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1f)),
+                                initialOffsetX = { it * slideDirection }
+                            ) + fadeIn(tween(duration)) togetherWith
+                            slideOutHorizontally(
+                                animationSpec = tween(duration, easing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1f)),
+                                targetOffsetX = { -it * slideDirection }
+                            ) + fadeOut(tween(duration))
+                        } else {
+                            fadeIn(animationSpec = tween(duration, easing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1f))) togetherWith
+                            fadeOut(animationSpec = tween(duration, easing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1f)))
+                        }
                     }
                 },
                 label = "ScreenTransition"
@@ -368,7 +429,7 @@ fun MainApp() {
                                 val audioItems by viewModel.audioItems.collectAsState()
                                 val pinnedItems by viewModel.pinnedItems.collectAsState()
                                 HomeScreen(
-                                    initialPage = targetScreen.initialPage,
+                                    initialPage = lastHomePageIndex,
                                     player = viewModel.player,
                                     audioItems = audioItems,
                                     pinnedItems = pinnedItems,
@@ -380,6 +441,9 @@ fun MainApp() {
                                             "pictures" -> navigateTo(AppScreen.Photos())
                                             "videos" -> navigateTo(AppScreen.Videos())
                                             "podcasts" -> navigateTo(AppScreen.Podcasts)
+                                            "music" -> navigateTo(AppScreen.CategoryList("songs"))
+                                            "settings" -> navigateTo(AppScreen.Personalize)
+                                            "apps" -> navigateTo(AppScreen.Apps)
                                             else -> navigateTo(AppScreen.CategoryList(category))
                                         }
                                     },
@@ -397,7 +461,8 @@ fun MainApp() {
                                     onScroll = { horizontalScrollOffset.floatValue = it },
                                     isAeroTheme = selectedBg == R.drawable.bg_4,
                                     getScrollPosition = getScrollPosition,
-                                    onScrollPositionChanged = onScrollPositionChanged
+                                    onScrollPositionChanged = onScrollPositionChanged,
+                                    onPageSelected = { lastHomePageIndex = it }
                                 )
                             }
                         }
@@ -545,13 +610,9 @@ fun MainApp() {
                             val albumArtUri = albumTracks.firstOrNull()?.albumArtUri
                             
                             var albumExtractedColor by remember { mutableStateOf(ZuneAccent) }
-                            LaunchedEffect(albumArtUri, selectedBg) {
-                                if (selectedBg == R.drawable.bg_4) {
-                                    albumExtractedColor = AeroBlueOrbAccentColor
-                                } else {
-                                    val newColor = extractDominantColor(context, albumArtUri?.toString())
-                                    albumExtractedColor = newColor ?: ZuneAccent
-                                }
+                            LaunchedEffect(albumArtUri) {
+                                val newColor = extractDominantColor(context, albumArtUri?.toString())
+                                albumExtractedColor = newColor ?: ZuneAccent
                             }
                             
                             val albumAccent by animateColorAsState(
@@ -645,12 +706,8 @@ fun MainApp() {
 
                             var albumExtractedColor by remember { mutableStateOf(ZuneAccent) }
                             LaunchedEffect(artworkUrl, selectedBg) {
-                                if (selectedBg == R.drawable.bg_4) {
-                                    albumExtractedColor = AeroBlueOrbAccentColor
-                                } else {
-                                    val newColor = extractDominantColor(context, artworkUrl.ifEmpty { null })
-                                    albumExtractedColor = newColor ?: ZuneAccent
-                                }
+                                val newColor = extractDominantColor(context, artworkUrl.ifEmpty { null })
+                                albumExtractedColor = newColor ?: ZuneAccent
                             }
                             
                             val albumAccent by animateColorAsState(
@@ -791,12 +848,8 @@ fun MainApp() {
 
                             var artistExtractedColor by remember { mutableStateOf(ZuneAccent) }
                             LaunchedEffect(artworkUrl, selectedBg) {
-                                if (selectedBg == R.drawable.bg_4) {
-                                    artistExtractedColor = AeroBlueOrbAccentColor
-                                } else {
-                                    val newColor = extractDominantColor(context, artworkUrl.ifEmpty { null })
-                                    artistExtractedColor = newColor ?: ZuneAccent
-                                }
+                                val newColor = extractDominantColor(context, artworkUrl.ifEmpty { null })
+                                artistExtractedColor = newColor ?: ZuneAccent
                             }
                             
                             val artistAccent by animateColorAsState(
@@ -948,6 +1001,26 @@ fun MainApp() {
                                 )
                             }
                         }
+                        is AppScreen.Apps -> {
+                            Box(Modifier.systemBarsPadding()) {
+                                AppsScreen(
+                                    pinnedIds = pinned.map { it.first },
+                                    onPin = { viewModel.pinSong(it) },
+                                    onUnpin = { viewModel.unpinSong(it) },
+                                    onBack = { navigateBack() }
+                                )
+                            }
+                        }
+                        is AppScreen.Personalize -> {
+                            Box(Modifier.systemBarsPadding()) {
+                                com.zune.player.ui.screens.PersonalizeScreen(
+                                    onBack = { navigateBack() },
+                                    isAeroTheme = selectedBg == R.drawable.bg_4,
+                                    getScrollPosition = getScrollPosition,
+                                    onScrollPositionChanged = onScrollPositionChanged
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -982,9 +1055,119 @@ fun MainApp() {
                     }
                 )
             }
+
+            // Custom Zune Volume Overlay Panel
+            val volLevel by MainActivity.volumeLevel.collectAsState()
+            val volTrigger by MainActivity.volumeTrigger.collectAsState()
+            var showVolumePanel by remember { mutableStateOf(false) }
+
+            LaunchedEffect(volTrigger) {
+                if (volTrigger > 0L) {
+                    showVolumePanel = true
+                    delay(2500)
+                    showVolumePanel = false
+                }
+            }
+
+            AnimatedVisibility(
+                visible = showVolumePanel,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+                modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 16.dp, end = 24.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = String.format("%02d", volLevel.coerceIn(0, 30)),
+                        style = TextStyle(
+                            fontFamily = SegoeUiFontFamily,
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.Light
+                        ),
+                        color = animatedAccent
+                    )
+                }
+            }
+
+            // Global clock overlay (pushed to extreme top right, visible on all screens)
+            SmallClock(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 4.dp, end = 16.dp)
+            )
+
+            // Global battery overlay (pushed to extreme bottom left, visible on all screens)
+            BatteryIndicator(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(bottom = 12.dp, start = 16.dp)
+            )
         }
     }
 }
+
+@Composable
+fun SmallClock(modifier: Modifier = Modifier) {
+    var timeText by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val sdf = java.text.SimpleDateFormat("h:mm", java.util.Locale.getDefault())
+        while (true) {
+            timeText = sdf.format(java.util.Date()).lowercase()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    Text(
+        text = timeText,
+        style = TextStyle(
+            fontFamily = SegoeUiFontFamily,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Normal
+        ),
+        color = Color.White.copy(alpha = 0.85f),
+        modifier = modifier
+    )
+}
+
+@Composable
+fun BatteryIndicator(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var batteryLevel by remember { mutableIntStateOf(-1) }
+    
+    DisposableEffect(context) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+                val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+                if (level != -1 && scale != -1) {
+                    batteryLevel = (level.toFloat() / scale.toFloat() * 100f).toInt()
+                }
+            }
+        }
+        val filter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        context.registerReceiver(receiver, filter)
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
+    }
+    
+    if (batteryLevel != -1) {
+        Text(
+            text = "$batteryLevel%",
+            style = TextStyle(
+                fontFamily = SegoeUiFontFamily,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal
+            ),
+            color = Color.White.copy(alpha = 0.85f),
+            modifier = modifier
+        )
+    }
+}
+
 
 @Composable
 fun ZuneHDScreensaver(
@@ -1176,6 +1359,15 @@ private fun isForwardTransition(initial: AppScreen, target: AppScreen): Boolean 
     if (target is AppScreen.Home) return false
     if (initial is AppScreen.Home) return true
     
+    if (initial is AppScreen.CategoryList && target is AppScreen.CategoryList) {
+        val categories = listOf("playlists", "songs", "artists", "albums")
+        val iIdx = categories.indexOf(initial.category.lowercase())
+        val tIdx = categories.indexOf(target.category.lowercase())
+        if (iIdx != -1 && tIdx != -1) {
+            return tIdx > iIdx
+        }
+    }
+    
     fun rank(screen: AppScreen): Int {
         return when (screen) {
             is AppScreen.Home -> 0
@@ -1189,6 +1381,8 @@ private fun isForwardTransition(initial: AppScreen, target: AppScreen): Boolean 
             is AppScreen.Videos -> 2
             is AppScreen.Podcasts -> 2
             is AppScreen.NowPlaying -> 3
+            is AppScreen.Personalize -> 2
+            is AppScreen.Apps -> 2
         }
     }
     return rank(target) > rank(initial)
@@ -1199,6 +1393,7 @@ fun ParallaxBackground(selectedBg: Int, horizontalScrollOffset: androidx.compose
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("zune_prefs", android.content.Context.MODE_PRIVATE) }
     val customBgUriStr = remember(selectedBg) { prefs.getString("bg_custom_uri", null) }
+    val accent = LocalZuneAccent.current
     
     if (selectedBg != 0) {
         val smoothedScrollOffsetState = animateFloatAsState(
@@ -1287,12 +1482,35 @@ fun ParallaxBackground(selectedBg: Int, horizontalScrollOffset: androidx.compose
         }
     }
 
-    // Dark tint over background images (not aero, not pure black)
-    if (selectedBg != 0 && selectedBg != R.drawable.bg_4) {
+    // Dark tint and gradient over background images (not pure black)
+    if (selectedBg != 0) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.55f))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.35f),
+                            Color.Black.copy(alpha = 0.75f)
+                        )
+                    )
+                )
+        )
+    } else {
+        // Pure black selectedBg == 0 -> subtle premium ambient accent glow in top-left
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.08f),
+                            Color.Transparent
+                        ),
+                        center = Offset(0f, 0f),
+                        radius = 1800f
+                    )
+                )
         )
     }
 }

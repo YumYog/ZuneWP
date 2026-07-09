@@ -66,7 +66,9 @@ fun SearchScreen(
     val coroutineScope = rememberCoroutineScope()
 
     val pages = listOf("collection", "online")
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = 0) { pages.size }
+    val pageCount = 20000
+    val middlePage = 10000
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = middlePage) { pageCount }
     val tabWidths = remember { androidx.compose.runtime.mutableStateMapOf<Int, Float>() }
 
     // Search query states
@@ -216,7 +218,7 @@ fun SearchScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color.Transparent)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             
@@ -242,7 +244,7 @@ fun SearchScreen(
                 Text(
                     text = "SEARCH",
                     style = ZuneTypography.h4.copy(
-                        fontFamily = SegoeUiLightFontFamily,
+                        fontFamily = SegoeUiFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     ),
@@ -264,17 +266,22 @@ fun SearchScreen(
                             val placeable = measurable.measure(constraints.copy(maxWidth = Constraints.Infinity))
                             layout(constraints.maxWidth, placeable.height) {
                                 var offsetPx = 0f
+                                val startVirtualIndex = pagerState.currentPage - 2
                                 val pageOffset = pagerState.currentPage + pagerState.currentPageOffsetFraction
                                 val activePageIndex = pageOffset.toInt()
                                 val fraction = pageOffset - activePageIndex
                                 
-                                for (i in 0 until activePageIndex) {
-                                    offsetPx += (tabWidths[i] ?: 0f)
+                                for (vIdx in startVirtualIndex until activePageIndex) {
+                                    val index = (vIdx % pages.size + pages.size) % pages.size
+                                    offsetPx += (tabWidths[index] ?: 0f)
                                 }
+                                
+                                val resolvedActiveIndex = (activePageIndex % pages.size + pages.size) % pages.size
                                 if (fraction > 0f) {
-                                    offsetPx += (tabWidths[activePageIndex] ?: 0f) * fraction
-                                } else if (fraction < 0f && activePageIndex > 0) {
-                                    offsetPx += (tabWidths[activePageIndex - 1] ?: 0f) * fraction
+                                    offsetPx += (tabWidths[resolvedActiveIndex] ?: 0f) * fraction
+                                } else if (fraction < 0f) {
+                                    val prevIndex = ((activePageIndex - 1) % pages.size + pages.size) % pages.size
+                                    offsetPx += (tabWidths[prevIndex] ?: 0f) * fraction
                                 }
                                 placeable.place(x = -offsetPx.toInt(), y = 0)
                             }
@@ -282,24 +289,27 @@ fun SearchScreen(
                         .padding(start = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    pages.forEachIndexed { index, title ->
+                    val visibleRange = (pagerState.currentPage - 2)..(pagerState.currentPage + 5)
+                    visibleRange.forEach { virtualIndex ->
+                        val index = (virtualIndex % pages.size + pages.size) % pages.size
+                        val title = pages[index]
                         val pageOffset = pagerState.currentPage + pagerState.currentPageOffsetFraction
-                        val distance = kotlin.math.abs(pageOffset - index)
+                        val distance = kotlin.math.abs(pageOffset - virtualIndex)
                         val alpha = (1f - distance * 0.6f).coerceIn(0.4f, 1f)
                         
                         val textColor = Color.White.copy(alpha = alpha)
                         val textStyle = ZuneTypography.h1.copy(
-                            fontFamily = SegoeUiLightFontFamily,
-                            fontSize = 56.sp
+                            fontFamily = SegoeUiFontFamily,
+                            fontSize = 42.sp
                         )
                         
                         Text(
-                            text = title,
+                            text = title.uppercase(),
                             style = textStyle,
                             color = textColor,
                             modifier = Modifier
                                 .metroClickable {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                                    coroutineScope.launch { pagerState.animateScrollToPage(virtualIndex) }
                                 }
                                 .layout { measurable, constraints ->
                                     val placeable = measurable.measure(constraints)
@@ -343,7 +353,8 @@ fun SearchScreen(
                     .weight(1f)
                     .fillMaxWidth()
             ) { page ->
-                when (page) {
+                val actualPageIndex = (page % pages.size + pages.size) % pages.size
+                when (actualPageIndex) {
                     0 -> {
                         // Collection Page
                         Column(
@@ -728,7 +739,7 @@ fun OnlineSearchResultCard(
                         onLongPress = { showMenu = true }
                     )
                 }
-                .padding(vertical = 10.dp),
+                .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Album Art or Placeholder
@@ -736,30 +747,30 @@ fun OnlineSearchResultCard(
                 AsyncImage(
                     model = track.artworkUrl,
                     contentDescription = null,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(44.dp),
                     contentScale = ContentScale.Crop
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(44.dp)
                         .background(Color(0xFF1E1E1E))
                 )
             }
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = track.title.lowercase(),
-                    style = ZuneTypography.h4.copy(fontSize = 24.sp),
+                    style = ZuneTypography.h4.copy(fontSize = 20.sp),
                     color = ZuneTextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "${track.artist} • ${track.album}".lowercase(),
-                    style = ZuneTypography.body2,
+                    style = ZuneTypography.body2.copy(fontSize = 12.sp),
                     color = ZuneTextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -927,7 +938,7 @@ fun SearchResultCard(
                         onLongPress = { showMenu = true }
                     )
                 }
-                .padding(vertical = 10.dp),
+                .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Album Art or Placeholder
@@ -935,30 +946,30 @@ fun SearchResultCard(
                 AsyncImage(
                     model = track.albumArtUri,
                     contentDescription = null,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(44.dp),
                     contentScale = ContentScale.Crop
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(44.dp)
                         .background(Color(0xFF1E1E1E))
                 )
             }
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = track.title.lowercase(),
-                    style = ZuneTypography.h4.copy(fontSize = 24.sp),
+                    style = ZuneTypography.h4.copy(fontSize = 20.sp),
                     color = if (isCurrentlyPlaying) LocalZuneAccent.current else ZuneTextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "${track.artist} • ${track.album}".lowercase(),
-                    style = ZuneTypography.body2,
+                    style = ZuneTypography.body2.copy(fontSize = 12.sp),
                     color = ZuneTextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

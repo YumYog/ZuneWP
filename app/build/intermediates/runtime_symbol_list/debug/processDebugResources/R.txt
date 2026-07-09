@@ -1597,6 +1597,7 @@ int string range_start 0x7f1100ce
 int string repeat_all 0x7f1100cf
 int string repeat_off 0x7f1100d0
 int string repeat_one 0x7f1100d1
+int string screensaver_name 0x7f1100e5
 int string search 0x7f1100d2
 int string search_menu_title 0x7f1100d3
 int string selected 0x7f1100d4
@@ -2744,3 +2745,4 @@ int styleable ViewStubCompat_android_inflatedId 2
 int xml automotive_app_desc 0x7f140000
 int xml backup_rules 0x7f140001
 int xml data_extraction_rules 0x7f140002
+int xml dream_info 0x7f140003
